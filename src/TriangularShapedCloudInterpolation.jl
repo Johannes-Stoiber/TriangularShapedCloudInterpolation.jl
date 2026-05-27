@@ -6,6 +6,7 @@
 module TriangularShapedCloudInterpolation
 
     export TSCInterpolation,
+           CICInterpolation
            get_tsc_positions
 
     """
@@ -41,6 +42,80 @@ module TriangularShapedCloudInterpolation
     """
     get_tsc_positions(pos::Array{<:Real}, res_elements::Integer) = get_tsc_positions(pos, [res_elements, res_elements, res_elements])
 
+    """
+        get_distances_weights_cic(pos::Array{<:Real}, n_steps::Integer; wraparound::Bool, isolated::Bool)
+
+    Helper function to calculate the weights in the CIC interpolation. 
+    """
+    @inline function get_distances_weights_cic(pos::Array{<:Real}, n_steps::Integer; 
+                                           wraparound::Bool, isolated::Bool)
+
+        # Coordinates of nearest grid point (ngp)
+        if wraparound
+            ng = floor.(pos  .+ 0.5)
+        else
+            ng = floor.(pos) .+ 0.5
+        end
+
+        # Distance from sample to ngp.
+        dng = ng .- pos   
+
+        # Index of npg 
+        if wraparound
+            k1 = ng
+        else
+            k1 = floor.(Int64, ng .- 0.5)
+        end
+
+        # Weight of ngp.
+        w1 = 1.0 .- abs.(dng)    
+
+        # Other side
+        left = findall( dng .< 0. ) #samples with ngp to the left 
+        nrleft = length(left)
+        # the following is only correct if x(ngp) > posx (ngp to the right) 
+        k2 = k1 .- 1 
+        # correct points where x(ngp) < posx (ngp to the left)
+        if nrleft != 0 
+            k2[left] .= k2[left] .+ 2 
+        end 
+        w2 = abs.(dng)
+          
+        # Periodic boundary conditions.
+        # Note that k2 can be both -1 and nx at this point, regardless of wraparound or not.
+        # The reason is that dng can be exactly zero.
+        bad = findall( k2 .== -1 ) 
+        if length(bad) > 0
+            k2[bad] .= n_steps - 1
+            if isolated
+                w2[bad] .= 0.0
+            end
+        end
+
+        bad = findall( k2 .== n_steps )
+        if length(bad) > 0
+            k2[bad] .= 0
+            if isolated
+                w2[bad] .= 0.0
+            end
+        end
+
+        if wraparound
+            bad = findall( k1 .== n_steps )
+            if length(bad) > 0
+                k1[bad] .= 0
+            end
+        end
+
+        return k1, k2, w1, w2 
+
+    end
+    
+    """
+        get_distances_weights(pos::Array{<:Real}, n_steps::Integer; wraparound::Bool, isolated::Bool)
+
+    Helper function to calculate the weights in the TSC interpolation. 
+    """
     @inline function get_distances_weights(pos::Array{<:Real}, n_steps::Integer; 
                                            wraparound::Bool, isolated::Bool)
 
@@ -150,6 +225,30 @@ module TriangularShapedCloudInterpolation
             dimx = 3
             dimy = 3
             dimz = 3
+        end
+
+        return dimx, dimy, dimz
+    end
+    
+    """
+        find_dim_bounds_cic(dim::Integer)
+
+    Helper function to get loop limits for dimension loops.
+    """
+    @inline function find_dim_bounds_cic(dim::Integer)
+
+        if dim == 1
+            dimx = 2
+            dimy = 1
+            dimz = 1
+        elseif dim == 2
+            dimx = 2
+            dimy = 2
+            dimz = 1
+        elseif dim == 3
+            dimx = 2
+            dimy = 2
+            dimz = 2
         end
 
         return dimx, dimy, dimz
@@ -270,6 +369,93 @@ module TriangularShapedCloudInterpolation
                                 average=average,
                                 wraparound=wraparound,
                                 isolated=isolated )
+    end
+    
+    """
+        CICInterpolation( value::Array{<:Real}, 
+                          pos::Array{<:Real},        
+                          res_elements::Array{<:Integer}, 
+                          average::Bool=true, 
+                          wraparound::Bool=false, 
+                          isolated::Bool=false    )
+
+    Runs a CIC interpolation on the `value` array based on the provided positions.
+    Returns a 3D array with interpolated values.
+    """
+    function CICInterpolation(  value::Array{<:Real}, 
+                                pos::Array{<:Real},        
+                                res_elements::Array{<:Integer};
+                                average::Bool=true, 
+                                wraparound::Bool=false, 
+                                isolated::Bool=false    )
+
+        Nsamples = length(value)
+        
+        # allocate arrays for indices and weights
+        kx = zeros(Int64, Nsamples,2)
+        ky = zeros(Int64, Nsamples,2)
+        kz = zeros(Int64, Nsamples,2)
+
+        wx = ones(Nsamples,2)
+        wy = ones(Nsamples,2)
+        wz = ones(Nsamples,2)
+
+        dim = size(pos,2)
+
+        nx = res_elements[1]
+
+        # x direction
+        kx[:,1], kx[:,2], wx[:,1], wx[:,2] = get_distances_weights_cic(pos[:,1], res_elements[1], 
+                                                                        wraparound = wraparound, 
+                                                                        isolated   = isolated)
+
+        # y direction
+        if dim > 1
+            ny = res_elements[2] 
+            ky[:,1], ky[:,2], wy[:,1], wy[:,2] = get_distances_weights_cic(pos[:,2], res_elements[2], 
+                                                                    wraparound = wraparound, 
+                                                                    isolated   = isolated)
+        else
+            ny = 1
+        end
+
+        # z direction
+        if dim > 2
+            nz = res_elements[3]
+            kz[:,1], kz[:,2], wz[:,1], wz[:,2] = get_distances_weights_cic(pos[:,3], res_elements[3], 
+                                                                    wraparound = wraparound, 
+                                                                    isolated   = isolated)
+        else
+            nz = 1
+        end
+
+        nxny = nx*ny
+
+        # find maximum indices for dimension loop
+        dimx, dimy, dimz = find_dim_bounds_cic(dim)
+
+        # allocate arrays for interpolated data and weighting
+        field = zeros( nx * ny * nz )
+        totcicweight = zeros( nx * ny * nz )
+
+        # run interpolation
+        @inbounds @fastmath for i = 1:dimx, j = 1:dimy, k = 1:dimz
+
+            index     = @. kx[:,i] + ky[:,j] * nx + kz[:,k] * nxny + 1
+            cicweight = @. wx[:,i] * wy[:,j] * wz[:,k]
+
+            calculate_weights!( field, totcicweight,
+                                index, cicweight, value, Nsamples,
+                                average=average )
+
+        end
+        
+        if average
+            good = findall(totcicweight .> 0.0)
+            field[good] ./= totcicweight[good]
+        end
+
+        return reshape(field, (nx, ny, nz))
     end
 
 end # module
