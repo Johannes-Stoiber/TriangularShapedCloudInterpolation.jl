@@ -458,5 +458,22 @@ module TriangularShapedCloudInterpolation
 
         return reshape(field, (nx, ny, nz))
     end
+    
+    function CICInterpolation(  value::Array{<:Real}, 
+                                pos::Array{<:Real},        
+                                res_elements::Integer;
+                                average::Bool=true, 
+                                wraparound::Bool=false, 
+                                isolated::Bool=false    )
+
+        dim = length(pos[1,:])
+
+        res = res_elements .* ones(Int64, dim)
+
+        return CICInterpolation(value, pos, res, 
+                                average=average,
+                                wraparound=wraparound,
+                                isolated=isolated )
+    end
 
 end # module
