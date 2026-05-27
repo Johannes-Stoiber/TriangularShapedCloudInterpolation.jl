@@ -1,12 +1,13 @@
 """
-    This is a port of the IDL script 'TSC.pro' by Joop Schaye from Feb 1999.
-    Original: https://idlastro.gsfc.nasa.gov/ftp/pro/math/tsc.pro
+    This is a port of the IDL scripts 'TSC.pro' and 'CIC.pro' by Joop Schaye from Feb 1999.
+    Original: https://asd.gsfc.nasa.gov/archive/idlastro/ftp/pro/math/cic.pro
+              https://asd.gsfc.nasa.gov/archive/idlastro/ftp/pro/math/tsc.pro 
 """
 
 module TriangularShapedCloudInterpolation
 
     export TSCInterpolation,
-           CICInterpolation
+           CICInterpolation,
            get_tsc_positions
 
     """
